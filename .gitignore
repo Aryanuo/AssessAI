@@ -5,3 +5,8 @@ dist/
 build/
 .vite/
 *.log
+database
+CHANGELOG.md
+IMPLEMENTATION_STATUS_REPORT.md
+PROJECT_MEMORY.md
+task.md
