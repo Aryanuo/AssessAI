@@ -32,6 +32,7 @@ async function generateContentWithFallback(prompt, customConfig = {}) {
         generationConfig: {
           maxOutputTokens: 8192,
           temperature: 0.2,
+          responseMimeType: "application/json",
           ...customConfig
         }
       });
@@ -171,12 +172,18 @@ ${extractedText}
 function parseGeminiJson(text) {
   let cleaned = text.trim();
 
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
+  // Strip all markdown code fences if present anywhere around the JSON
+  cleaned = cleaned.replace(/^```[a-z]*\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+
+  // Extract from the first '{' to the last '}'
+  const firstBrace = cleaned.indexOf("{");
+  if (firstBrace !== -1) {
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    } else {
+      cleaned = cleaned.substring(firstBrace);
+    }
   }
 
   try {
