@@ -15,10 +15,31 @@ const genAI =
     env.geminiApiKey
   );
 
-const model =
-  genAI.getGenerativeModel({
-    model: "gemini-3.6-flash"
-  });
+// Fallback model chain: tries each in order until one succeeds
+const FALLBACK_MODELS = [
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite"
+];
+
+async function generateContentWithFallback(prompt) {
+  let lastError;
+  for (const modelName of FALLBACK_MODELS) {
+    try {
+      console.log(`[Gemini] Trying model: ${modelName}`);
+      const m = genAI.getGenerativeModel({ model: modelName });
+      const result = await m.generateContent(prompt);
+      console.log(`[Gemini] Success with model: ${modelName}`);
+      return result;
+    } catch (err) {
+      console.warn(`[Gemini] Model ${modelName} failed: ${err.message}`);
+      lastError = err;
+    }
+  }
+  throw new Error(
+    `All Gemini models failed. Last error: ${lastError?.message}`
+  );
+}
 
 export async function generateQuestions(
   extractedText
@@ -131,15 +152,8 @@ DOCUMENT:
 ${extractedText}
 `;
 
-  const result =
-    await model.generateContent(prompt);
-
-  const response =
-    result.response;
-
-  const text =
-    response.text();
-
+  const result = await generateContentWithFallback(prompt);
+  const text = result.response.text();
   return parseGeminiJson(text);
 }
 
@@ -211,7 +225,7 @@ Return ONLY a valid JSON object in this exact format (no markdown, no backticks)
 `;
 
   try {
-    const result = await model.generateContent(prompt);
+    const result = await generateContentWithFallback(prompt);
     const text = result.response.text();
     const parsed = parseGeminiJson(text);
 
