@@ -67,6 +67,8 @@ IMPORTANT FORMATTING RULES:
 - Return ONLY valid JSON.
 - Do not return markdown.
 - Do not wrap JSON in triple backticks.
+- Never use unescaped double quotes inside question_text, option text, or topics. Use single quotes (') if quoting words or terms inside strings.
+- Do not put trailing commas after the last item in any array or object.
 - Do not invent information that is not supported by the document.
 - Create questions only from the supplied content.
 - Correct answers must be derived from the document.
@@ -186,6 +188,9 @@ function parseGeminiJson(text) {
     }
   }
 
+  // Strip trailing commas before closing brackets/braces (common LLM JSON syntax error)
+  cleaned = cleaned.replace(/,\s*([\]}])/g, "$1");
+
   try {
     return JSON.parse(cleaned);
   } catch (err) {
@@ -193,7 +198,8 @@ function parseGeminiJson(text) {
     if (cleaned.includes('"questions"') && !cleaned.trim().endsWith("}")) {
       const lastObjIndex = cleaned.lastIndexOf("}");
       if (lastObjIndex !== -1) {
-        const repaired = cleaned.substring(0, lastObjIndex + 1) + "\n]}";
+        let repaired = cleaned.substring(0, lastObjIndex + 1) + "\n]}";
+        repaired = repaired.replace(/,\s*([\]}])/g, "$1");
         try {
           console.log("[Gemini] Successfully repaired truncated JSON response");
           return JSON.parse(repaired);
