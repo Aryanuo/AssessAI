@@ -567,42 +567,10 @@ function TestDetails() {
               </CardContent>
             </Card>
 
-            {/* Danger Zone Card */}
-            <Card style={{ borderColor: "var(--danger-200)" }}>
-              <CardHeader style={{ backgroundColor: "var(--danger-50)" }}>
-                <CardTitle style={{ color: "var(--danger-700)", fontSize: "1rem" }}>Danger Zone</CardTitle>
-              </CardHeader>
-
-              <CardContent style={{ padding: "1rem 1.5rem" }}>
-                <p style={{ fontSize: "0.8125rem", color: "var(--slate-500)", marginBottom: "0.75rem" }}>
-                  Permanently delete this assessment and all candidate attempts.
-                </p>
-
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => setShowDeleteModal(true)}
-                  style={{ width: "100%" }}
-                >
-                  Delete Assessment
-                </Button>
-              </CardContent>
-            </Card>
+            {/* Danger Zone Card temporarily removed from frontend */}
           </div>
         </div>
       </div>
-
-      {/* Delete Confirmation Dialog */}
-      <ConfirmDialog
-        isOpen={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleConfirmDelete}
-        title="Delete Assessment?"
-        message="Are you sure you want to delete this assessment? All associated questions, documents, settings, and participant attempts will be permanently erased."
-        confirmLabel="Yes, Delete Assessment"
-        confirmVariant="danger"
-        loading={deleting}
-      />
     </div>
   );
 }

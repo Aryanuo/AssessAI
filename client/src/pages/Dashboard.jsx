@@ -296,16 +296,7 @@ function Dashboard() {
                       </Link>
                     )}
                   </div>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeletingTestId(test.id)}
-                    style={{ color: "var(--danger-600)", padding: "0.375rem" }}
-                    title="Delete assessment"
-                  >
-                    🗑️
-                  </Button>
+                  {/* Delete test button temporarily removed from frontend */}
                 </div>
               </Card>
             );

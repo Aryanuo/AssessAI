@@ -22,12 +22,19 @@ const FALLBACK_MODELS = [
   "gemini-3.5-flash-lite"
 ];
 
-async function generateContentWithFallback(prompt) {
+async function generateContentWithFallback(prompt, customConfig = {}) {
   let lastError;
   for (const modelName of FALLBACK_MODELS) {
     try {
       console.log(`[Gemini] Trying model: ${modelName}`);
-      const m = genAI.getGenerativeModel({ model: modelName });
+      const m = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          maxOutputTokens: 8192,
+          temperature: 0.2,
+          ...customConfig
+        }
+      });
       const result = await m.generateContent(prompt);
       console.log(`[Gemini] Success with model: ${modelName}`);
       return result;
@@ -47,15 +54,19 @@ export async function generateQuestions(
   const prompt = `
 You are an assessment question extraction system.
 
-Convert the supplied educational document into
-structured assessment questions.
+Convert the supplied educational document into structured assessment questions.
 
-IMPORTANT:
+CRITICAL INSTRUCTIONS ON COMPLETENESS AND QUESTION COUNT:
+1. Extract and convert ALL questions from the supplied document. Do NOT skip, summarize, sample, or omit any questions.
+2. If the document has 100 questions, you MUST generate and return all 100 questions in the array.
+3. Keep question text and option texts concise and direct so that all questions fit within the response token limit.
+4. Continue generating until the entire document is processed from start to finish. Do not stop early.
+
+IMPORTANT FORMATTING RULES:
 - Return ONLY valid JSON.
 - Do not return markdown.
 - Do not wrap JSON in triple backticks.
-- Do not invent information that is not supported
-  by the document.
+- Do not invent information that is not supported by the document.
 - Create questions only from the supplied content.
 - Correct answers must be derived from the document.
 
@@ -170,9 +181,22 @@ function parseGeminiJson(text) {
 
   try {
     return JSON.parse(cleaned);
-  } catch {
+  } catch (err) {
+    // If output ended abruptly near token limit, try to auto-close the questions array
+    if (cleaned.includes('"questions"') && !cleaned.trim().endsWith("}")) {
+      const lastObjIndex = cleaned.lastIndexOf("}");
+      if (lastObjIndex !== -1) {
+        const repaired = cleaned.substring(0, lastObjIndex + 1) + "\n]}";
+        try {
+          console.log("[Gemini] Successfully repaired truncated JSON response");
+          return JSON.parse(repaired);
+        } catch {
+          // ignore repair failure, proceed to throw original
+        }
+      }
+    }
     throw new Error(
-      "Gemini returned invalid JSON"
+      "Gemini returned invalid JSON: " + err.message
     );
   }
 }
