@@ -184,25 +184,35 @@ export async function generateTestQuestions(
       );
 
     /*
-     * 7. Insert questions
+     * 7. Insert questions in batches
      */
-    const {
-      data: insertedQuestions,
-      error: insertError
-    } = await supabase
-      .from("questions")
-      .insert(questionRows)
-      .select();
+    const BATCH_SIZE = 50;
+    const insertedQuestions = [];
 
-    if (insertError) {
-      console.error(
-        "Question insert error:",
-        insertError
-      );
+    for (let i = 0; i < questionRows.length; i += BATCH_SIZE) {
+      const batch = questionRows.slice(i, i + BATCH_SIZE);
+      const {
+        data: batchData,
+        error: insertError
+      } = await supabase
+        .from("questions")
+        .insert(batch)
+        .select();
 
-      return res.status(500).json({
-        error: insertError.message
-      });
+      if (insertError) {
+        console.error(
+          "Question insert error:",
+          insertError
+        );
+
+        return res.status(500).json({
+          error: insertError.message
+        });
+      }
+
+      if (batchData) {
+        insertedQuestions.push(...batchData);
+      }
     }
 
     res.status(201).json({

@@ -22,6 +22,97 @@ const FALLBACK_MODELS = [
   "gemini-3.5-flash-lite"
 ];
 
+/**
+ * Splits extracted document text into manageable chunks.
+ * Uses question boundary detection for question banks or paragraph boundary detection for study materials.
+ */
+export function splitDocumentIntoChunks(extractedText, options = {}) {
+  const maxCharsPerChunk = options.maxCharsPerChunk || 6000;
+  const maxQuestionsPerChunk = options.maxQuestionsPerChunk || 20;
+
+  const text = (extractedText || "").trim();
+  if (!text) return [];
+
+  // Small document check: <= 4500 characters -> process in a single request
+  if (text.length <= 4500) {
+    return [text];
+  }
+
+  // Strategy 1: Detect explicit question numbers at line starts
+  // Matches "1.", "1)", "1:", "1 -", "Q1.", "Q.1", "Question 1:", "Question 1."
+  const questionRegex = /(?:^|\r?\n)\s*(?:(?:Q(?:uestion)?\s*[:.]?\s*\d+[\.\)\:\-]?|\d+[\.\)\:\-]))\s+/gi;
+
+  const matches = [];
+  let match;
+  while ((match = questionRegex.exec(text)) !== null) {
+    matches.push({
+      index: match.index,
+      length: match[0].length
+    });
+  }
+
+  // If we detected a substantial number of questions (>= 10), chunk by question blocks
+  if (matches.length >= 10) {
+    const questionBlocks = [];
+    for (let i = 0; i < matches.length; i++) {
+      const startIndex = matches[i].index;
+      const endIndex = (i + 1 < matches.length) ? matches[i + 1].index : text.length;
+      questionBlocks.push(text.substring(startIndex, endIndex).trim());
+    }
+
+    const chunks = [];
+    let currentChunkQuestions = [];
+    let currentChunkCharCount = 0;
+
+    for (const qBlock of questionBlocks) {
+      const blockLength = qBlock.length;
+      const wouldExceedQuestions = currentChunkQuestions.length >= maxQuestionsPerChunk;
+      const wouldExceedChars = (currentChunkCharCount + blockLength > maxCharsPerChunk) && currentChunkQuestions.length >= 5;
+
+      if ((wouldExceedQuestions || wouldExceedChars) && currentChunkQuestions.length > 0) {
+        chunks.push(currentChunkQuestions.join("\n\n"));
+        currentChunkQuestions = [qBlock];
+        currentChunkCharCount = blockLength;
+      } else {
+        currentChunkQuestions.push(qBlock);
+        currentChunkCharCount += blockLength;
+      }
+    }
+
+    if (currentChunkQuestions.length > 0) {
+      chunks.push(currentChunkQuestions.join("\n\n"));
+    }
+
+    return chunks;
+  }
+
+  // Strategy 2: Paragraph / line-based chunking for general study notes or non-numbered texts
+  const paragraphs = text.split(/\r?\n\s*\r?\n/);
+  const chunks = [];
+  let currentChunk = [];
+  let currentLength = 0;
+
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+
+    if (currentLength + trimmed.length > maxCharsPerChunk && currentChunk.length > 0) {
+      chunks.push(currentChunk.join("\n\n"));
+      currentChunk = [trimmed];
+      currentLength = trimmed.length;
+    } else {
+      currentChunk.push(trimmed);
+      currentLength += trimmed.length;
+    }
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk.join("\n\n"));
+  }
+
+  return chunks.length > 0 ? chunks : [text];
+}
+
 async function generateContentWithFallback(prompt, customConfig = {}) {
   let lastError;
   for (const modelName of FALLBACK_MODELS) {
@@ -42,6 +133,10 @@ async function generateContentWithFallback(prompt, customConfig = {}) {
     } catch (err) {
       console.warn(`[Gemini] Model ${modelName} failed: ${err.message}`);
       lastError = err;
+      // If error is 429 / quota limit, short delay before trying the fallback model
+      if (err.message && (err.message.includes("429") || err.message.includes("quota"))) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
     }
   }
   throw new Error(
@@ -49,19 +144,24 @@ async function generateContentWithFallback(prompt, customConfig = {}) {
   );
 }
 
-export async function generateQuestions(
-  extractedText
-) {
-  const prompt = `
-You are an assessment question extraction system.
+/**
+ * Internal helper to generate questions for a single chunk.
+ */
+async function generateChunkQuestions(chunkText, chunkIndex, totalChunks) {
+  const contextHeader = totalChunks > 1
+    ? `You are processing part ${chunkIndex} of ${totalChunks} of an assessment document.`
+    : `You are processing an assessment document.`;
 
-Convert the supplied educational document into structured assessment questions.
+  const prompt = `
+${contextHeader}
+
+Convert the supplied educational content into structured assessment questions.
 
 CRITICAL INSTRUCTIONS ON COMPLETENESS AND QUESTION COUNT:
-1. Extract and convert ALL questions from the supplied document. Do NOT skip, summarize, sample, or omit any questions.
-2. If the document has 100 questions, you MUST generate and return all 100 questions in the array.
+1. Extract and convert ALL questions from this section without skipping, summarizing, sampling, or omitting any question.
+2. If this section contains multiple questions, you MUST generate and return every single question in the array.
 3. Keep question text and option texts concise and direct so that all questions fit within the response token limit.
-4. Continue generating until the entire document is processed from start to finish. Do not stop early.
+4. Continue generating until all content in this section is completely processed. Do not stop early.
 
 IMPORTANT FORMATTING RULES:
 - Return ONLY valid JSON.
@@ -74,14 +174,12 @@ IMPORTANT FORMATTING RULES:
 - Correct answers must be derived from the document.
 
 Allowed question types:
-
 MCQ
 TRUE_FALSE
 SHORT_ANSWER
 LONG_ANSWER
 
 Return exactly this structure:
-
 {
   "questions": [
     {
@@ -117,7 +215,6 @@ Return exactly this structure:
 }
 
 Rules:
-
 1. MCQ:
    - Exactly 4 options.
    - correct_answer must be A, B, C, or D.
@@ -144,26 +241,15 @@ Rules:
    - expected_answer must contain the expected answer or key points.
    - rubric must contain evaluation criteria.
 
-5. difficulty must be:
-   EASY
-   MEDIUM
-   HARD
-
+5. difficulty must be: EASY, MEDIUM, or HARD.
 6. marks must be a positive number.
-
 7. negative_marks must be a number >= 0.
+8. topic should identify the topic covered by the question.
+9. If the section does not contain enough information to create a question, do not create that question.
 
-8. topic should identify the topic covered by
-   the question.
+DOCUMENT CONTENT:
 
-9. If the document does not contain enough
-   information to create a question, do not
-   create that question.
-
-DOCUMENT:
-
-
-${extractedText}
+${chunkText}
 `;
 
   const result = await generateContentWithFallback(prompt);
@@ -171,8 +257,69 @@ ${extractedText}
   return parseGeminiJson(text);
 }
 
-function parseGeminiJson(text) {
-  let cleaned = text.trim();
+/**
+ * Main question generation entry point.
+ * Automatically chunks large documents, retries failed chunks with fallback models,
+ * and combines questions in original sequence.
+ */
+export async function generateQuestions(extractedText) {
+  const chunks = splitDocumentIntoChunks(extractedText);
+  const totalChunks = chunks.length;
+
+  console.log(`[Gemini] Document split into ${totalChunks} chunk${totalChunks > 1 ? "s" : ""}`);
+
+  const allQuestions = [];
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkText = chunks[i];
+    const chunkIndex = i + 1;
+    let chunkQuestions = null;
+    let lastChunkError = null;
+    const MAX_CHUNK_RETRIES = 3;
+
+    for (let attempt = 1; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+      console.log(
+        `[Gemini] Processing chunk ${chunkIndex}/${totalChunks}${attempt > 1 ? ` (retry attempt ${attempt})` : ""}`
+      );
+
+      try {
+        const chunkResult = await generateChunkQuestions(chunkText, chunkIndex, totalChunks);
+
+        if (chunkResult && Array.isArray(chunkResult.questions) && chunkResult.questions.length > 0) {
+          chunkQuestions = chunkResult.questions;
+          console.log(`[Gemini] Chunk ${chunkIndex} generated ${chunkQuestions.length} questions`);
+          break; // Succeeded on this attempt
+        } else {
+          throw new Error(`Chunk ${chunkIndex} returned 0 valid questions`);
+        }
+      } catch (err) {
+        console.warn(`[Gemini] Chunk ${chunkIndex} attempt ${attempt} failed: ${err.message}`);
+        lastChunkError = err;
+        if (attempt < MAX_CHUNK_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    }
+
+    if (!chunkQuestions) {
+      throw new Error(
+        `Failed to generate questions for chunk ${chunkIndex}/${totalChunks} after ${MAX_CHUNK_RETRIES} attempts: ${lastChunkError?.message}`
+      );
+    }
+
+    // Append chunk questions in strict original order without duplication
+    allQuestions.push(...chunkQuestions);
+  }
+
+  console.log(`[Gemini] All ${totalChunks} chunks processed. Total questions generated: ${allQuestions.length}`);
+
+  return {
+    questions: allQuestions
+  };
+}
+
+export function parseGeminiJson(text) {
+  let cleaned = (text || "").trim();
 
   // Strip all markdown code fences if present anywhere around the JSON
   cleaned = cleaned.replace(/^```[a-z]*\s*/i, "").replace(/\s*```\s*$/i, "").trim();
@@ -194,20 +341,6 @@ function parseGeminiJson(text) {
   try {
     return JSON.parse(cleaned);
   } catch (err) {
-    // If output ended abruptly near token limit, try to auto-close the questions array
-    if (cleaned.includes('"questions"') && !cleaned.trim().endsWith("}")) {
-      const lastObjIndex = cleaned.lastIndexOf("}");
-      if (lastObjIndex !== -1) {
-        let repaired = cleaned.substring(0, lastObjIndex + 1) + "\n]}";
-        repaired = repaired.replace(/,\s*([\]}])/g, "$1");
-        try {
-          console.log("[Gemini] Successfully repaired truncated JSON response");
-          return JSON.parse(repaired);
-        } catch {
-          // ignore repair failure, proceed to throw original
-        }
-      }
-    }
     throw new Error(
       "Gemini returned invalid JSON: " + err.message
     );
