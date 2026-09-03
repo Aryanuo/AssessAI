@@ -216,6 +216,7 @@ export async function createTeam(req, res, next) {
       .insert({
         test_id: test.id,
         team_code: teamCode,
+        name: team_name.trim(),
         team_name: team_name.trim()
       })
       .select()
