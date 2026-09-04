@@ -1,6 +1,8 @@
-# AssessAI   [Live](https://assessify-two.vercel.app/) 200+ users with 1000+ page visits
+# AssessAI
 
-> AI-powered assessment creation, delivery, and evaluation platform.
+> **AI-powered assessment creation, delivery, and evaluation platform.**
+
+**🚀 [Live](https://assessify-two.vercel.app/) in Production | 200+ Visitors | 1,000+ Page Views**
 
 ![Dashboard](Assets/dashboard.png)
 
