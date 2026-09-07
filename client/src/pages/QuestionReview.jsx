@@ -17,6 +17,30 @@ import { LoadingSpinner, EmptyState } from "../components/ui/Alert";
 import { Modal, ConfirmDialog } from "../components/ui/Modal";
 import { TestWorkspaceHeader } from "../components/layout/TestWorkspaceHeader";
 
+export function cleanQuestionText(text) {
+  if (!text || typeof text !== "string") return text;
+  let s = text.trim();
+
+  // 1. Separate code from question prompt if glued without newline:
+  s = s.replace(/([?!.:])\s+(?=(?:main\s*\([^)]*\)\s*\{|#include\b|int\s+main|void\s+main|def\s+[a-zA-Z_]|class\s+[a-zA-Z_]|import\s+[a-zA-Z_]|public\s+class))/gi, "$1\n\n");
+
+  // 2. Fix inline single-line comments that swallow subsequent code on the same line:
+  s = s.replace(/(\/\/[^\n\r]*?)\s+(?=(?:for\s*\(|while\s*\(|if\s*\(|return\b|int\b|char\b|float\b|void\b|double\b|push\b|pop\b|printf\b|scanf\b|cout\b|cin\b|cout\s*<<|cin\s*>>|\}))/gi, "$1\n");
+
+  // 3. Separate squashed statements after semicolons in code (ignoring for-loop headers):
+  s = s.replace(/;(?!\s*[\w\s]*\))\s+(?=(?:int\b|char\b|float\b|double\b|long\b|void\b|for\s*\(|while\s*\(|if\s*\(|return\b|printf\b|scanf\b|cout\b|cin\b|push\b|pop\b))/gi, ";\n");
+
+  // 4. Format opening and closing braces:
+  s = s.replace(/(main\s*\([^)]*\)\s*\{)\s*(?!\n)/gi, "$1\n  ");
+  s = s.replace(/;\s*\}\s*$/gi, ";\n}");
+
+  // 5. Separate squashed options if merged into question text:
+  s = s.replace(/([?!.])\s+([A-D][\:\)])\s+/g, "$1\n\n$2 ");
+  s = s.replace(/([^\n])\s+([B-D][\:\)])\s+/g, "$1\n$2 ");
+
+  return s;
+}
+
 function QuestionReview() {
   const { id: testId } = useParams();
 
@@ -25,6 +49,7 @@ function QuestionReview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [formattingAll, setFormattingAll] = useState(false);
 
   const [savingId, setSavingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -152,6 +177,52 @@ function QuestionReview() {
     }
   }
 
+  async function handleFormatAll() {
+    if (questions.length === 0) return;
+    try {
+      setFormattingAll(true);
+      setError("");
+
+      const formattedQuestions = questions.map((q) => ({
+        ...q,
+        question_text: cleanQuestionText(q.question_text),
+        options: Array.isArray(q.options)
+          ? q.options.map((opt) => ({
+              ...opt,
+              text: cleanQuestionText(opt.text)
+            }))
+          : q.options
+      }));
+
+      setQuestions(formattedQuestions);
+
+      let count = 0;
+      for (const q of formattedQuestions) {
+        await updateQuestion(q.id, {
+          type: q.type,
+          question_text: q.question_text,
+          difficulty: q.difficulty,
+          topic: q.topic,
+          marks: Number(q.marks),
+          negative_marks: Number(q.negative_marks || 0),
+          options: q.options,
+          correct_answer: q.correct_answer,
+          expected_answer: q.expected_answer,
+          rubric: q.rubric
+        });
+        count++;
+      }
+
+      setSuccessMsg(`All ${count} questions have been auto-formatted with clean line breaks and code structure!`);
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Failed to auto-format questions.");
+    } finally {
+      setFormattingAll(false);
+    }
+  }
+
   function updateLocalQuestion(questionId, field, value) {
     setQuestions((current) =>
       current.map((q) => (q.id === questionId ? { ...q, [field]: value } : q))
@@ -214,9 +285,6 @@ function QuestionReview() {
     }
   }
 
-  // Calculate stats
-  const totalMarks = questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0);
-
   const filteredQuestions = useMemo(() => {
     return questions.filter((q) => {
       const matchType = filterType === "ALL" || q.type === filterType;
@@ -228,6 +296,10 @@ function QuestionReview() {
       return matchType && matchDiff && matchSearch;
     });
   }, [questions, filterType, filterDifficulty, searchQuery]);
+
+  const totalMarks = useMemo(() => {
+    return questions.reduce((acc, q) => acc + (Number(q.marks) || 0), 0);
+  }, [questions]);
 
   if (loading) {
     return <LoadingSpinner text="Loading question repository..." />;
@@ -258,7 +330,17 @@ function QuestionReview() {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: "0.75rem" }}>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+            <Button
+              variant="outline"
+              size="md"
+              onClick={handleFormatAll}
+              disabled={formattingAll || questions.length === 0}
+              title="Auto-detect and format code snippets, indentation, and newlines across all questions"
+            >
+              {formattingAll ? "Formatting All..." : "⚡ Auto-Format All Code"}
+            </Button>
+
             <Button variant="primary" size="md" onClick={() => setShowAddModal(true)}>
               + Add Question
             </Button>
@@ -519,13 +601,59 @@ function QuestionReview() {
                   </div>
 
                   {/* Question Text */}
-                  <Textarea
-                    label="Question Prompt"
-                    rows={3}
-                    value={question.question_text || ""}
-                    onChange={(e) => updateLocalQuestion(question.id, "question_text", e.target.value)}
-                    placeholder="Enter the full question prompt..."
-                  />
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <label style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--slate-700)" }}>
+                        Question Prompt
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const formatted = cleanQuestionText(question.question_text);
+                          updateLocalQuestion(question.id, "question_text", formatted);
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "var(--primary-600)",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.25rem",
+                          padding: "0.2rem 0.5rem",
+                          borderRadius: "var(--radius-sm)",
+                          backgroundColor: "var(--primary-50)"
+                        }}
+                        title="Auto-format code indentation and newlines for this question"
+                      >
+                        ⚡ Auto-Format Code
+                      </button>
+                    </div>
+
+                    <textarea
+                      rows={Math.max(4, Math.min(12, (question.question_text || "").split("\n").length + 1))}
+                      value={question.question_text || ""}
+                      onChange={(e) => updateLocalQuestion(question.id, "question_text", e.target.value)}
+                      placeholder="Enter the full question prompt..."
+                      style={{
+                        width: "100%",
+                        padding: "0.625rem 0.875rem",
+                        borderRadius: "var(--radius-md)",
+                        border: "1px solid var(--slate-300)",
+                        fontSize: "0.875rem",
+                        lineHeight: 1.6,
+                        whiteSpace: "pre-wrap",
+                        fontFamily:
+                          (question.question_text || "").includes(";") ||
+                          (question.question_text || "").includes("{") ||
+                          (question.question_text || "").includes("()")
+                            ? "var(--font-mono), monospace"
+                            : "inherit"
+                      }}
+                    />
+                  </div>
 
                   {/* MCQ & True/False Options Editor */}
                   {(question.type === "MCQ" || question.type === "TRUE_FALSE") && (

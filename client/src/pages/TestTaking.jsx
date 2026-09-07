@@ -708,7 +708,7 @@ export default function TestTaking() {
 
               {/* Question Body */}
               <CardContent style={{ padding: "2rem 1.5rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-                <p style={{ fontSize: "1.0625rem", color: "var(--slate-900)", lineHeight: 1.6, fontWeight: 500 }}>
+                <p style={{ fontSize: "1.0625rem", color: "var(--slate-900)", lineHeight: 1.6, fontWeight: 500, whiteSpace: "pre-wrap" }}>
                   {currentQ.question_text}
                 </p>
 
@@ -746,7 +746,7 @@ export default function TestTaking() {
                           <strong style={{ minWidth: "20px", color: isChecked ? "var(--primary-700)" : "var(--slate-700)" }}>
                             {optLabel}.
                           </strong>
-                          <span style={{ color: "var(--slate-800)", fontSize: "0.9375rem" }}>
+                          <span style={{ color: "var(--slate-800)", fontSize: "0.9375rem", whiteSpace: "pre-wrap" }}>
                             {opt.text || opt}
                           </span>
                         </label>
