@@ -334,7 +334,7 @@ function AttemptDetail() {
 
               <CardContent style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
                 {/* Question Prompt */}
-                <p style={{ fontSize: "0.9375rem", color: "var(--slate-800)", lineHeight: 1.5, fontWeight: 500 }}>
+                <p style={{ fontSize: "0.9375rem", color: "var(--slate-800)", lineHeight: 1.6, fontWeight: 500, whiteSpace: "pre-wrap" }}>
                   {q.question_text}
                 </p>
 
@@ -380,7 +380,7 @@ function AttemptDetail() {
                         >
                           <div>
                             <strong style={{ marginRight: "0.375rem" }}>{optLabel}.</strong>
-                            <span>{opt.text || opt}</span>
+                            <span style={{ whiteSpace: "pre-wrap" }}>{opt.text || opt}</span>
                           </div>
 
                           {badgeText && (

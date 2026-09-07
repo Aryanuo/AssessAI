@@ -157,15 +157,24 @@ ${contextHeader}
 
 Convert the supplied educational content into structured assessment questions.
 
-CRITICAL INSTRUCTIONS ON COMPLETENESS AND QUESTION COUNT:
+CRITICAL INSTRUCTIONS ON COMPLETENESS, CODE FORMATTING, AND NEWLINES:
 1. Extract and convert ALL questions from this section without skipping, summarizing, sampling, or omitting any question.
 2. If this section contains multiple questions, you MUST generate and return every single question in the array.
-3. Keep question text and option texts concise and direct so that all questions fit within the response token limit.
-4. Continue generating until all content in this section is completely processed. Do not stop early.
+3. PRESERVE CODE STRUCTURE AND NEWLINES:
+   - For programming, algorithmic, or technical questions, YOU MUST PRESERVE the exact multi-line structure, newlines (\\n), and indentation of code snippets.
+   - NEVER flatten or squash code into a single line. Use \\n inside the JSON string to format code with proper line breaks.
+   - Semicolons, braces ('{', '}'), and single-line comments ('//') must be formatted with newlines. In particular, a single-line comment '//' MUST be followed by a newline (\\n) so it does not comment out the next line of code!
+   - Separate the question problem statement from code blocks with a double newline (\\n\\n).
+4. NEVER MERGE OPTIONS INTO QUESTION TEXT:
+   - Do NOT put option labels or text (such as "A: ... B: ... C: ... D: ...") inside question_text.
+   - The question_text must contain only the problem prompt and code.
+   - Put each option choice strictly in its corresponding entry in the "options" array.
+5. If an option choice itself contains code or multi-line text, preserve the newlines (\\n) inside that option's "text" field.
+6. Continue generating until all content in this section is completely processed. Do not stop early.
 
 IMPORTANT FORMATTING RULES:
 - Return ONLY valid JSON.
-- Do not return markdown.
+- Do not return markdown code blocks.
 - Do not wrap JSON in triple backticks.
 - Never use unescaped double quotes inside question_text, option text, or topics. Use single quotes (') if quoting words or terms inside strings.
 - Do not put trailing commas after the last item in any array or object.
@@ -184,9 +193,9 @@ Return exactly this structure:
   "questions": [
     {
       "type": "MCQ",
-      "question_text": "Question text",
+      "question_text": "What will be the output of the following program?\\n\\n#include <stdio.h>\\nmain() {\\n    char str[] = 'sanfoundry';\\n    printf('%s', str);\\n    return 0;\\n}",
       "difficulty": "EASY",
-      "topic": "Topic",
+      "topic": "C Programming",
       "marks": 1,
       "negative_marks": 0,
       "options": [
@@ -301,14 +310,20 @@ export async function generateQuestions(extractedText) {
       }
     }
 
-    if (!chunkQuestions) {
-      throw new Error(
-        `Failed to generate questions for chunk ${chunkIndex}/${totalChunks} after ${MAX_CHUNK_RETRIES} attempts: ${lastChunkError?.message}`
-      );
-    }
+    // Sanitize and format each question to preserve code newlines
+    const sanitizedQuestions = (chunkQuestions || []).map((q) => ({
+      ...q,
+      question_text: cleanQuestionText(q.question_text),
+      options: Array.isArray(q.options)
+        ? q.options.map((opt) => ({
+            ...opt,
+            text: cleanQuestionText(opt.text)
+          }))
+        : q.options
+    }));
 
     // Append chunk questions in strict original order without duplication
-    allQuestions.push(...chunkQuestions);
+    allQuestions.push(...sanitizedQuestions);
   }
 
   console.log(`[Gemini] All ${totalChunks} chunks processed. Total questions generated: ${allQuestions.length}`);
@@ -316,6 +331,33 @@ export async function generateQuestions(extractedText) {
   return {
     questions: allQuestions
   };
+}
+
+/**
+ * Ensures code snippets, multiline statements, and options have clean newlines
+ */
+export function cleanQuestionText(text) {
+  if (!text || typeof text !== "string") return text;
+  let s = text.trim();
+
+  // 1. Separate code from question prompt if glued without newline:
+  s = s.replace(/([?!.:])\s+(?=(?:main\s*\([^)]*\)\s*\{|#include\b|int\s+main|void\s+main|def\s+[a-zA-Z_]|class\s+[a-zA-Z_]|import\s+[a-zA-Z_]|public\s+class))/gi, "$1\n\n");
+
+  // 2. Fix inline single-line comments that swallow subsequent code on the same line:
+  s = s.replace(/(\/\/[^\n\r]*?)\s+(?=(?:for\s*\(|while\s*\(|if\s*\(|return\b|int\b|char\b|float\b|void\b|double\b|push\b|pop\b|printf\b|scanf\b|cout\b|cin\b|cout\s*<<|cin\s*>>|\}))/gi, "$1\n");
+
+  // 3. Separate squashed statements after semicolons in code (ignoring for-loop headers):
+  s = s.replace(/;(?!\s*[\w\s]*\))\s+(?=(?:int\b|char\b|float\b|double\b|long\b|void\b|for\s*\(|while\s*\(|if\s*\(|return\b|printf\b|scanf\b|cout\b|cin\b|push\b|pop\b))/gi, ";\n");
+
+  // 4. Format opening and closing braces:
+  s = s.replace(/(main\s*\([^)]*\)\s*\{)\s*(?!\n)/gi, "$1\n  ");
+  s = s.replace(/;\s*\}\s*$/gi, ";\n}");
+
+  // 5. Separate squashed options if merged into question text:
+  s = s.replace(/([?!.])\s+([A-D][\:\)])\s+/g, "$1\n\n$2 ");
+  s = s.replace(/([^\n])\s+([B-D][\:\)])\s+/g, "$1\n$2 ");
+
+  return s;
 }
 
 export function parseGeminiJson(text) {
