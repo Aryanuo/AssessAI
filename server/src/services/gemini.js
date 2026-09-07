@@ -409,12 +409,12 @@ Return ONLY a valid JSON object in this exact format (no markdown, no backticks)
     };
   } catch (error) {
     console.error("Gemini evaluation error:", error);
-    // Fallback: safe default if AI evaluation fails
+    // Fallback: mark as PENDING_REVIEW instead of silently assigning score 0
     return {
-      score: 0,
+      score: null,
       max_score: maxMarks,
-      feedback: "Answer recorded for creator review.",
-      confidence: "LOW"
+      feedback: "AI grading unavailable (traffic or quota limit reached). Pending review.",
+      confidence: "PENDING_REVIEW"
     };
   }
 }

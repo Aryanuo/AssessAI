@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getAttemptDetail, getAttemptViolations } from "../services/api";
+import { getAttemptDetail, getAttemptViolations, reEvaluateAttempt } from "../services/api";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/Card";
@@ -16,32 +16,64 @@ function AttemptDetail() {
   const [violations, setViolations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reEvaluating, setReEvaluating] = useState(false);
+  const [reEvalResult, setReEvalResult] = useState(null);
+
+  const loadDetail = useCallback(async () => {
+    try {
+      const [detailData, violationsData] = await Promise.all([
+        getAttemptDetail(testId, attemptId),
+        getAttemptViolations(attemptId).catch(() => ({ violations: [] }))
+      ]);
+
+      setTest(detailData.test);
+      setAttempt(detailData.attempt);
+      setQuestions(detailData.questions || []);
+      setViolations(violationsData.violations || []);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Failed to load attempt details.");
+    }
+  }, [testId, attemptId]);
 
   useEffect(() => {
-    async function loadDetail() {
-      try {
-        setLoading(true);
-        setError("");
-
-        const [detailData, violationsData] = await Promise.all([
-          getAttemptDetail(testId, attemptId),
-          getAttemptViolations(attemptId).catch(() => ({ violations: [] }))
-        ]);
-
-        setTest(detailData.test);
-        setAttempt(detailData.attempt);
-        setQuestions(detailData.questions || []);
-        setViolations(violationsData.violations || []);
-      } catch (err) {
-        console.error(err);
-        setError(err.message || "Failed to load attempt details.");
-      } finally {
-        setLoading(false);
-      }
+    async function init() {
+      setLoading(true);
+      setError("");
+      await loadDetail();
+      setLoading(false);
     }
+    init();
+  }, [loadDetail]);
 
-    loadDetail();
-  }, [testId, attemptId]);
+  async function handleReEvaluate() {
+    try {
+      setReEvaluating(true);
+      setReEvalResult(null);
+      const res = await reEvaluateAttempt(testId, attemptId);
+
+      if (res.still_pending > 0) {
+        setReEvalResult({
+          type: "warning",
+          message: res.message || `Gemini is busy and has evaluated ${res.evaluated} out of ${res.total_pending} questions (${res.still_pending} still pending). You can try again after sometime.`
+        });
+      } else {
+        setReEvalResult({
+          type: "success",
+          message: res.message || "All pending questions have been successfully evaluated! Score updated."
+        });
+      }
+      await loadDetail();
+    } catch (err) {
+      console.error("Re-evaluation error:", err);
+      setReEvalResult({
+        type: "error",
+        message: err.message || "Failed to re-evaluate attempt. Gemini might be busy. Please try again after sometime."
+      });
+    } finally {
+      setReEvaluating(false);
+    }
+  }
 
   if (loading) {
     return <LoadingSpinner text="Loading candidate attempt breakdown & grading rubrics..." />;
@@ -62,6 +94,15 @@ function AttemptDetail() {
 
   const participant = attempt?.participant;
   const team = attempt?.team;
+
+  const subjectiveQuestions = questions.filter(
+    (q) => q.type === "SHORT_ANSWER" || q.type === "LONG_ANSWER"
+  );
+  const pendingQuestions = questions.filter(
+    (q) => q.ai_confidence === "PENDING_REVIEW" || (q.awarded_score === null && (q.type === "SHORT_ANSWER" || q.type === "LONG_ANSWER"))
+  );
+  const evaluatedSubjectiveCount = subjectiveQuestions.length - pendingQuestions.length;
+  const isNeedsReview = attempt?.status === "NEEDS_REVIEW" || pendingQuestions.length > 0;
 
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
@@ -97,6 +138,52 @@ function AttemptDetail() {
         </p>
       </div>
 
+      {/* Re-evaluation Result Alert */}
+      {reEvalResult && (
+        <Alert
+          variant={reEvalResult.type}
+          title={reEvalResult.type === "success" ? "✓ Re-evaluation Complete" : reEvalResult.type === "warning" ? "⚠️ Gemini Notice" : "Re-evaluation Error"}
+          onClose={() => setReEvalResult(null)}
+          style={{ marginBottom: "1.5rem" }}
+        >
+          {reEvalResult.message}
+        </Alert>
+      )}
+
+      {/* AI Grading Incomplete / NEEDS_REVIEW Banner */}
+      {isNeedsReview && (
+        <Alert
+          variant="warning"
+          title="⚠️ AI Grading Incomplete — Pending Manual Review or Re-evaluation"
+          style={{ marginBottom: "1.5rem" }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <p style={{ fontSize: "0.875rem", margin: 0 }}>
+              Gemini was busy or experienced high traffic during assessment submission.
+              {" "}<strong>{evaluatedSubjectiveCount} of {subjectiveQuestions.length} open-ended questions</strong> have been evaluated successfully (<strong>{pendingQuestions.length} question{pendingQuestions.length > 1 ? "s" : ""} pending review</strong>).
+            </p>
+            <p style={{ fontSize: "0.8125rem", color: "var(--slate-600)", margin: 0 }}>
+              Current score is a <strong>partial score ({attempt?.score !== null ? attempt.score : 0} / {attempt?.max_score})</strong> based on graded questions. Click below to retry AI evaluation for pending questions.
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "0.25rem" }}>
+              <Button
+                variant="warning"
+                size="sm"
+                onClick={handleReEvaluate}
+                disabled={reEvaluating}
+              >
+                {reEvaluating ? "Evaluating with Gemini..." : "⚡ Re-evaluate with AI"}
+              </Button>
+              {reEvaluating && (
+                <span style={{ fontSize: "0.8125rem", color: "var(--slate-500)" }}>
+                  Sending questions to Gemini... please wait.
+                </span>
+              )}
+            </div>
+          </div>
+        </Alert>
+      )}
+
       {/* Candidate Overview Card */}
       <Card style={{ marginBottom: "1.5rem" }}>
         <CardContent style={{ padding: "1.5rem" }}>
@@ -129,10 +216,15 @@ function AttemptDetail() {
                     ({Number(attempt.percentage).toFixed(1)}%)
                   </span>
                 )}
+                {isNeedsReview && (
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--warning-700)", fontWeight: 700, marginTop: "0.25rem" }}>
+                    (Partial Score — {pendingQuestions.length} pending review)
+                  </span>
+                )}
               </div>
               <div style={{ marginTop: "0.25rem" }}>
-                <Badge variant={attempt?.status === "EVALUATED" ? "success" : "primary"}>
-                  {attempt?.status}
+                <Badge variant={attempt?.status === "EVALUATED" ? "success" : isNeedsReview ? "warning" : "primary"}>
+                  {attempt?.status === "NEEDS_REVIEW" ? "NEEDS REVIEW" : attempt?.status}
                 </Badge>
               </div>
             </div>
@@ -184,8 +276,11 @@ function AttemptDetail() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
         {questions.map((q, idx) => {
-          const isFull = Number(q.awarded_score) === Number(q.max_score) && Number(q.max_score) > 0;
-          const isZero = Number(q.awarded_score) <= 0;
+          const isPending =
+            q.ai_confidence === "PENDING_REVIEW" ||
+            (q.awarded_score === null && (q.type === "SHORT_ANSWER" || q.type === "LONG_ANSWER"));
+          const isFull = !isPending && Number(q.awarded_score) === Number(q.max_score) && Number(q.max_score) > 0;
+          const isZero = !isPending && Number(q.awarded_score) <= 0;
 
           return (
             <Card key={q.question_id || idx}>
@@ -208,6 +303,7 @@ function AttemptDetail() {
                   </span>
                   <Badge variant="primary">{q.type}</Badge>
                   {q.difficulty && <Badge variant="outline">{q.difficulty}</Badge>}
+                  {isPending && <Badge variant="warning">PENDING REVIEW</Badge>}
                   {q.topic && <span style={{ fontSize: "0.75rem", color: "var(--slate-500)" }}>• {q.topic}</span>}
                 </div>
 
@@ -222,10 +318,16 @@ function AttemptDetail() {
                     style={{
                       fontWeight: 800,
                       fontSize: "1rem",
-                      color: isFull ? "var(--success-700)" : isZero ? "var(--danger-700)" : "var(--warning-700)"
+                      color: isPending
+                        ? "var(--warning-700)"
+                        : isFull
+                        ? "var(--success-700)"
+                        : isZero
+                        ? "var(--danger-700)"
+                        : "var(--warning-700)"
                     }}
                   >
-                    Score: {q.awarded_score} / {q.max_score}
+                    Score: {isPending ? "—" : q.awarded_score} / {q.max_score}
                   </span>
                 </div>
               </div>
@@ -347,8 +449,27 @@ function AttemptDetail() {
                   </div>
                 )}
 
-                {/* Gemini AI Feedback */}
-                {q.feedback && (
+                {/* Gemini AI Feedback / Pending Review Notice */}
+                {isPending ? (
+                  <div
+                    style={{
+                      padding: "0.875rem 1rem",
+                      backgroundColor: "var(--warning-50)",
+                      borderLeft: "3px solid var(--warning-500)",
+                      borderRadius: "0 var(--radius-md) var(--radius-md) 0"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                      <strong style={{ fontSize: "0.8125rem", color: "var(--warning-900)" }}>
+                        ⚠️ AI Grading Pending (Gemini Traffic / Rate Limit)
+                      </strong>
+                      <Badge variant="warning" size="sm">PENDING REVIEW</Badge>
+                    </div>
+                    <p style={{ fontSize: "0.8125rem", color: "var(--warning-800)", margin: 0 }}>
+                      {q.feedback || "This question could not be evaluated automatically because Gemini was busy or reached quota limit. Click 'Re-evaluate with AI' at the top of the page to evaluate it."}
+                    </p>
+                  </div>
+                ) : q.feedback ? (
                   <div
                     style={{
                       padding: "0.875rem 1rem",
@@ -371,7 +492,7 @@ function AttemptDetail() {
                       {q.feedback}
                     </p>
                   </div>
-                )}
+                ) : null}
               </CardContent>
             </Card>
           );

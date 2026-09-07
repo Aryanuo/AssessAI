@@ -1,4 +1,5 @@
 import { supabase } from "../../config/supabase.js";
+import { reEvaluatePendingAnswers } from "../../services/evaluation.js";
 
 export async function getTestResults(req, res, next) {
   try {
@@ -52,7 +53,7 @@ export async function getTestResults(req, res, next) {
     // 3. Compute summary statistics
     const allAttempts = attempts || [];
     const completedAttempts = allAttempts.filter(
-      (a) => a.status === "EVALUATED" || a.status === "SUBMITTED"
+      (a) => a.status === "EVALUATED" || a.status === "SUBMITTED" || a.status === "NEEDS_REVIEW"
     );
 
     let totalScoreSum = 0;
@@ -75,12 +76,14 @@ export async function getTestResults(req, res, next) {
     });
 
     const evaluatedCount = completedAttempts.length;
+    const needsReviewCount = allAttempts.filter((a) => a.status === "NEEDS_REVIEW").length;
     const averageScore = evaluatedCount > 0 ? Number((totalScoreSum / evaluatedCount).toFixed(2)) : 0;
     const averagePercentage = evaluatedCount > 0 ? Number((totalPercentageSum / evaluatedCount).toFixed(2)) : 0;
 
     const analytics = {
       total_attempts: allAttempts.length,
       completed_attempts: evaluatedCount,
+      needs_review_attempts: needsReviewCount,
       in_progress_attempts: allAttempts.length - evaluatedCount,
       average_score: averageScore,
       average_percentage: averagePercentage,
@@ -226,6 +229,31 @@ export async function getAttemptDetail(req, res, next) {
       attempt,
       questions: questionBreakdown
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function reEvaluateAttempt(req, res, next) {
+  try {
+    const { testId, attemptId } = req.params;
+    const creatorId = req.user.id;
+
+    // 1. Verify test ownership
+    const { data: test, error: testError } = await supabase
+      .from("tests")
+      .select("id")
+      .eq("id", testId)
+      .eq("creator_id", creatorId)
+      .maybeSingle();
+
+    if (testError || !test) {
+      return res.status(404).json({ error: "Assessment not found" });
+    }
+
+    // 2. Perform re-evaluation of pending answers
+    const result = await reEvaluatePendingAnswers(attemptId);
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

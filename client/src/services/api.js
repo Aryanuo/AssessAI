@@ -363,6 +363,18 @@ export async function getAttemptDetail(
   );
 }
 
+export async function reEvaluateAttempt(
+  testId,
+  attemptId
+) {
+  return apiFetch(
+    `/api/tests/${testId}/results/${attemptId}/re-evaluate`,
+    {
+      method: "POST"
+    }
+  );
+}
+
 // ──── Anti-Cheat Violations & Monitoring ────
 
 export async function recordViolation(

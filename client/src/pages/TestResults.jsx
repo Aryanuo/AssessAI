@@ -153,6 +153,14 @@ function TestResults() {
           </div>
         )}
 
+        {/* Needs Review Alert */}
+        {analytics?.needs_review_attempts > 0 && (
+          <Alert variant="warning" style={{ marginBottom: "1.5rem" }}>
+            ⚠️ <strong>{analytics.needs_review_attempts} candidate submission{analytics.needs_review_attempts > 1 ? "s" : ""} need review or re-evaluation</strong> due to Gemini AI traffic limits.
+            Click <strong>"View Attempt"</strong> on any marked submission to review and re-evaluate pending questions.
+          </Alert>
+        )}
+
         {/* ── Attempts Table Card ── */}
         <Card>
           <CardHeader>
@@ -209,6 +217,8 @@ function TestResults() {
                       const statusVariant =
                         att.status === "EVALUATED"
                           ? "success"
+                          : att.status === "NEEDS_REVIEW"
+                          ? "warning"
                           : att.status === "SUBMITTED"
                           ? "primary"
                           : att.status === "IN_PROGRESS"
@@ -245,13 +255,20 @@ function TestResults() {
                           </td>
 
                           <td style={{ padding: "0.75rem 1rem" }}>
-                            <Badge variant={statusVariant}>{att.status}</Badge>
+                            <Badge variant={statusVariant}>
+                              {att.status === "NEEDS_REVIEW" ? "NEEDS REVIEW" : att.status}
+                            </Badge>
                           </td>
 
                           <td style={{ padding: "0.75rem 1rem", fontWeight: 700, color: "var(--slate-900)" }}>
                             {att.score !== null && att.score !== undefined
                               ? `${att.score} / ${att.max_score}`
                               : "—"}
+                            {att.status === "NEEDS_REVIEW" && (
+                              <div style={{ fontSize: "0.6875rem", color: "var(--warning-700)", fontWeight: 600 }}>
+                                (Partial)
+                              </div>
+                            )}
                           </td>
 
                           <td style={{ padding: "0.75rem 1rem" }}>
