@@ -944,5 +944,8 @@ AssessAI is built using:
 
 **Create assessments faster. Review with confidence. Evaluate smarter.**
 
+## License
+
+This project is licensed under the MIT License.
 
 
