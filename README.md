@@ -732,9 +732,7 @@ GEMINI_API_KEY=your_gemini_api_key
 
 Use the exact environment variable names expected by the current application configuration.
 
-### Important
 
-Never commit real credentials or `.env` files to GitHub.
 
 ---
 
